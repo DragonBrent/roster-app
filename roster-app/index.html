@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PLUS Roster Parser</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      max-width: 750px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f4f5f7;
+      color: #172b4d;
+    }
+    .card {
+      background: #ffffff;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+      margin-bottom: 20px;
+    }
+    h1 { margin-top: 0; font-size: 1.4rem; }
+
+    .drop-zone {
+      border: 2px dashed #0066cc;
+      border-radius: 8px;
+      padding: 32px 16px;
+      text-align: center;
+      background: #fafbfc;
+      cursor: pointer;
+      transition: background 0.2s ease, border-color 0.2s ease;
+      margin: 16px 0;
+    }
+    .drop-zone:hover { background: #f0f7ff; }
+    .drop-zone.drag-over { background: #e0efff; border-color: #004499; }
+    .drop-zone-text { font-weight: 500; color: #0066cc; pointer-events: none; }
+    .drop-zone-subtext { font-size: 0.85rem; color: #6b778c; margin-top: 6px; pointer-events: none; }
+
+    .form-group { margin-top: 16px; }
+    label { display: block; font-weight: 600; margin-bottom: 6px; font-size: 0.95rem; }
+    select {
+      width: 100%;
+      padding: 10px;
+      border-radius: 6px;
+      border: 1px solid #c1c7d0;
+      font-size: 1rem;
+      background: #fff;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+    th, td {
+      text-align: left;
+      padding: 8px 10px;
+      border-bottom: 1px solid #e1e4e8;
+      font-size: 0.9rem;
+    }
+    th { background-color: #f8f9fa; }
+    
+    .status-badge {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+    .badge-work { background: #e3fcef; color: #006644; }
+    .badge-afwezig { background: #ffebe6; color: #bf2600; }
+    .badge-vrij { background: #f4f5f7; color: #6b778c; }
+
+    .status-box {
+      padding: 10px;
+      border-radius: 6px;
+      background: #e9ecef;
+      font-size: 0.9rem;
+      margin-top: 10px;
+    }
+
+    button {
+      background: #0066cc;
+      color: white;
+      border: none;
+      padding: 12px 16px;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      width: 100%;
+      font-size: 1rem;
+      margin-top: 16px;
+    }
+    button:hover { background: #0052a3; }
+  </style>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+</head>
+<body>
+
+  <div class="card">
+    <h1>PLUS Roster Parser</h1>
+    <p>Upload or drag your roster PDF below.</p>
+    
+    <div id="dropZone" class="drop-zone">
+      <div class="drop-zone-text">📁 Drag & Drop roster PDF here</div>
+      <div class="drop-zone-subtext">or click to browse files</div>
+      <input type="file" id="pdfInput" accept="application/pdf" style="display: none;" />
+    </div>
+    
+    <div id="nameContainer" class="form-group" style="display: none;">
+      <label for="employeeSelect">Select Employee:</label>
+      <select id="employeeSelect"></select>
+    </div>
+
+    <div id="status" class="status-box">Awaiting PDF file...</div>
+  </div>
+
+  <div class="card" id="previewCard" style="display: none;">
+    <h2>Parsed Shifts Preview</h2>
+    <p style="font-size: 0.85rem; color: #5e6c84;">Full week schedule overview. Only active shifts will be exported to your calendar.</p>
+    
+    <table>
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Dept</th>
+          <th>Start</th>
+          <th>End</th>
+          <th>Pauze</th>
+          <th>Agenda Title / Status</th>
+        </tr>
+      </thead>
+      <tbody id="previewTableBody"></tbody>
+    </table>
+
+    <button id="downloadBtn">Export Active Shifts to Calendar (.ics)</button>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
