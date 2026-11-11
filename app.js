@@ -3,8 +3,10 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs
 let dayColumns = [];             // Array of 7 days: [{ dayName, dateFormatted, x }]
 let employeeDataMap = new Map();        // Name -> Map of daily shifts
 let activeShiftsToExport = [];          // Active shifts queued for .ics download
+let cachedPdfDataBuffers = [];          // Cached raw PDF items across pages
+let cachedDetectedYear = new Date().getFullYear();
 
-const KNOWN_DEPTS = ['AGF', 'Vers', 'Kassa', 'Vuldienst', 'Brood', 'Slagerij', 'Logistiek'];
+const KNOWN_DEPTS = ['AGF', 'Vers', 'Kassa', 'Vuldienst', 'Brood', 'Slagerij', 'Logistiek', 'KW', 'Ecommerce', 'Bezorgen'];
 
 const HEADER_FOOTER_KEYWORDS = [
   'medewerker', 'uitgeleend', 'ingeroosterde', 'uren', 'van', 'tot', 'pauze',
@@ -14,6 +16,8 @@ const HEADER_FOOTER_KEYWORDS = [
 
 const dropZone = document.getElementById('dropZone');
 const pdfInput = document.getElementById('pdfInput');
+const deptSelect = document.getElementById('deptSelect');
+const employeeSelect = document.getElementById('employeeSelect');
 
 dropZone.addEventListener('click', () => pdfInput.click());
 
@@ -49,25 +53,34 @@ pdfInput.addEventListener('change', (e) => {
   }
 });
 
+// Instantly re-parse and update preview & ICS when default department changes
+deptSelect.addEventListener('change', () => {
+  if (cachedPdfDataBuffers.length > 0) {
+    reparseCachedData();
+  }
+});
+
+employeeSelect.addEventListener('change', () => {
+  renderShiftsForSelected();
+});
+
 async function processPdfFile(file) {
   const statusEl = document.getElementById('status');
   const previewCard = document.getElementById('previewCard');
   const nameContainer = document.getElementById('nameContainer');
+  const deptContainer = document.getElementById('deptContainer');
   
   statusEl.textContent = `Reading "${file.name}"...`;
   previewCard.style.display = "none";
   nameContainer.style.display = "none";
   
-  employeeDataMap.clear();
+  cachedPdfDataBuffers = [];
   dayColumns = [];
 
   try {
     const arrayBuffer = await file.arrayBuffer();
     const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
     
-    let allPageSections = [];
-    let detectedYear = new Date().getFullYear();
-
     for (let pageNum = 1; pageNum <= pdf.numPages; pageNum++) {
       const page = await pdf.getPage(pageNum);
       const textContent = await page.getTextContent();
@@ -79,7 +92,7 @@ async function processPdfFile(file) {
 
         const yearMatch = str.match(/(20\d{2})-\d{2}/);
         if (yearMatch) {
-          detectedYear = parseInt(yearMatch[1], 10);
+          cachedDetectedYear = parseInt(yearMatch[1], 10);
         }
 
         pageItems.push({
@@ -90,11 +103,11 @@ async function processPdfFile(file) {
         });
       });
 
-      allPageSections.push(...parsePageItems(pageItems, pageNum));
+      cachedPdfDataBuffers.push(...parsePageItems(pageItems, pageNum));
     }
 
-    for (const section of allPageSections) {
-      extractDayColumns(section.rows, detectedYear);
+    for (const section of cachedPdfDataBuffers) {
+      extractDayColumns(section.rows, cachedDetectedYear);
       if (dayColumns.length === 7) break;
     }
 
@@ -103,11 +116,8 @@ async function processPdfFile(file) {
       return;
     }
 
-    allPageSections.forEach(section => {
-      parseSectionEmployees(section);
-    });
-
-    populateEmployeeDropdown();
+    deptContainer.style.display = "block";
+    reparseCachedData();
 
   } catch (err) {
     console.error(err);
@@ -139,7 +149,7 @@ function parsePageItems(items, pageNum) {
     rows.push(currentRow);
   }
 
-  let sectionBaseDept = "AGF";
+  let sectionBaseDept = deptSelect.value;
   for (const r of rows) {
     const rowText = r.map(i => i.str.trim()).join(' ');
     const matchedDept = KNOWN_DEPTS.find(d => d.toLowerCase() === rowText.toLowerCase());
@@ -177,17 +187,28 @@ function extractDayColumns(rows, year) {
   }
 }
 
+function reparseCachedData() {
+  employeeDataMap.clear();
+
+  cachedPdfDataBuffers.forEach(section => {
+    parseSectionEmployees(section);
+  });
+
+  populateEmployeeDropdown();
+}
+
 function parseSectionEmployees(section) {
   const isPauzeStr = (str) => /^(00:\d{2}|01:00)$/.test(str);
   const isTimeStr = (str) => /^([01]?\d|2[0-3]):[0-5]\d$/.test(str);
-  const baseDept = section.dept || "AGF";
+  
+  // Use the live dropdown selection as fallback department
+  const baseDept = deptSelect.value || section.dept || "AGF";
 
   let currentEmployeeName = null;
 
   section.rows.forEach(row => {
     if (row.length === 0) return;
 
-    // Check for employee name on the left side (x < 110)
     row.forEach(item => {
       if (item.x < 110) {
         const str = item.str.trim();
@@ -203,14 +224,12 @@ function parseSectionEmployees(section) {
 
     if (!currentEmployeeName) return;
 
-    // IF STATEMENT: Check if there is something in the Uitgeleend column (X: 80 - 165) for THIS row
     let subRowDept = baseDept;
     row.forEach(item => {
       if (item.x >= 80 && item.x <= 165) {
         const str = item.str.trim();
         const lower = str.toLowerCase();
 
-        // If a valid department or non-numeric label exists in Uitgeleend column
         if (str && 
             !HEADER_FOOTER_KEYWORDS.some(k => lower.includes(k)) && 
             !/^\d+:\d+$/.test(str) && 
@@ -220,11 +239,10 @@ function parseSectionEmployees(section) {
       }
     });
 
-    // Group shift items by X position
     const itemsByCol = new Array(dayColumns.length).fill(null).map(() => []);
 
     row.forEach(item => {
-      if (item.x < 195) return; // Skip name, uitgeleend, total hours
+      if (item.x < 195) return;
 
       let closestColIdx = 0;
       let minDiff = Infinity;
@@ -296,9 +314,11 @@ function parseSectionEmployees(section) {
 function populateEmployeeDropdown() {
   const statusEl = document.getElementById('status');
   const nameContainer = document.getElementById('nameContainer');
-  const employeeSelect = document.getElementById('employeeSelect');
 
+  // Remember current selection if already populated
+  const currentSelection = employeeSelect.value;
   employeeSelect.innerHTML = "";
+  
   const names = Array.from(employeeDataMap.keys());
 
   if (names.length === 0) {
@@ -313,8 +333,11 @@ function populateEmployeeDropdown() {
     employeeSelect.appendChild(option);
   });
 
-  const defaultTarget = names.find(n => n.toLowerCase().includes("brent de jong")) || names[0];
-  employeeSelect.value = defaultTarget;
+  if (names.includes(currentSelection)) {
+    employeeSelect.value = currentSelection;
+  } else {
+    employeeSelect.value = names.find(n => n.toLowerCase().includes("brent de jong")) || names[0];
+  }
 
   nameContainer.style.display = "block";
   statusEl.textContent = `Loaded roster for ${names.length} employee(s).`;
@@ -322,15 +345,11 @@ function populateEmployeeDropdown() {
   renderShiftsForSelected();
 }
 
-document.getElementById('employeeSelect').addEventListener('change', () => {
-  renderShiftsForSelected();
-});
-
 function renderShiftsForSelected() {
   const statusEl = document.getElementById('status');
   const tableBody = document.getElementById('previewTableBody');
   const previewCard = document.getElementById('previewCard');
-  const selectedName = document.getElementById('employeeSelect').value;
+  const selectedName = employeeSelect.value;
 
   tableBody.innerHTML = "";
   activeShiftsToExport = [];
@@ -398,7 +417,7 @@ document.getElementById('downloadBtn').addEventListener('click', () => {
     return;
   }
 
-  const selectedName = document.getElementById('employeeSelect').value;
+  const selectedName = employeeSelect.value;
   let icsContent = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//PLUS Roster Generator//EN\r\nCALSCALE:GREGORIAN\r\n";
 
   activeShiftsToExport.forEach((shift, idx) => {
